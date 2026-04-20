@@ -354,13 +354,6 @@ jobs:
         run: |
           cmake --build $BUILD_DIR --parallel
 
-      - name: Verify required packaging files
-        run: |
-          test -f scripts/deploy.sh
-          test -f scripts/rollback.sh
-          test -f scripts/post_deploy_healthcheck.sh
-          test -f deploy/systemd/student-grade-service.service
-
       - name: Prepare package structure
         run: |
           rm -rf dist
@@ -371,18 +364,119 @@ jobs:
           cp $BUILD_DIR/$APP_NAME dist/app/
           chmod +x dist/app/$APP_NAME
 
-          cp scripts/deploy.sh dist/scripts/
-          cp scripts/rollback.sh dist/scripts/
-          cp scripts/post_deploy_healthcheck.sh dist/scripts/
-          chmod +x dist/scripts/*.sh
+          cat > dist/scripts/deploy.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
 
-          if [ -f deploy/systemd/student-grade-service.service ]; then
-            cp deploy/systemd/student-grade-service.service dist/systemd/
-          else
-            echo "ERROR: Missing file deploy/systemd/student-grade-service.service"
-            echo "Create the systemd service file in deploy/systemd/student-grade-service.service"
+          PACKAGE_PATH="${1:-}"
+          APP_ROOT="/opt/student-grade-service"
+          CURRENT_DIR="${APP_ROOT}/current"
+          SCRIPTS_DIR="${APP_ROOT}/scripts"
+          BACKUP_DIR="/opt/student-grade-service-backups"
+          STAGING_DIR="/tmp/student-grade-service-deploy"
+
+          if [ -z "$PACKAGE_PATH" ]; then
+            echo "Usage: deploy.sh <package.tar.gz>"
             exit 1
           fi
+
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR"
+          tar -xzf "$PACKAGE_PATH" -C "$STAGING_DIR"
+
+          mkdir -p "$BACKUP_DIR"
+          if [ -d "$CURRENT_DIR" ] && [ -f "$CURRENT_DIR/student_grade_service" ]; then
+            TS=$(date +%Y%m%d%H%M%S)
+            rm -rf "${BACKUP_DIR}/backup-${TS}"
+            mkdir -p "${BACKUP_DIR}/backup-${TS}"
+            cp -R "${CURRENT_DIR}/." "${BACKUP_DIR}/backup-${TS}/"
+            ln -sfn "${BACKUP_DIR}/backup-${TS}" "${BACKUP_DIR}/latest"
+          fi
+
+          rm -rf "$CURRENT_DIR"
+          mkdir -p "$CURRENT_DIR"
+
+          cp -R "$STAGING_DIR/app/." "$CURRENT_DIR/"
+          chmod +x "$CURRENT_DIR/student_grade_service"
+
+          if [ -d "$STAGING_DIR/scripts" ]; then
+            mkdir -p "$SCRIPTS_DIR"
+            cp -R "$STAGING_DIR/scripts/." "$SCRIPTS_DIR/"
+            chmod +x "$SCRIPTS_DIR/"*.sh || true
+          fi
+
+          systemctl restart student-grade-service
+          EOF
+
+          cat > dist/scripts/rollback.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          APP_ROOT="/opt/student-grade-service"
+          CURRENT_DIR="${APP_ROOT}/current"
+          BACKUP_LINK="/opt/student-grade-service-backups/latest"
+
+          if [ ! -L "$BACKUP_LINK" ] && [ ! -d "$BACKUP_LINK" ]; then
+            echo "No backup found for rollback"
+            exit 1
+          fi
+
+          TARGET_BACKUP="$(readlink -f "$BACKUP_LINK")"
+          if [ -z "$TARGET_BACKUP" ] || [ ! -d "$TARGET_BACKUP" ]; then
+            echo "Resolved backup path is invalid"
+            exit 1
+          fi
+
+          rm -rf "$CURRENT_DIR"
+          mkdir -p "$CURRENT_DIR"
+          cp -R "${TARGET_BACKUP}/." "$CURRENT_DIR/"
+          chmod +x "$CURRENT_DIR/student_grade_service"
+
+          systemctl restart student-grade-service
+          EOF
+
+          cat > dist/scripts/post_deploy_healthcheck.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          URL="${1:-http://localhost:8080/health}"
+          MAX_ATTEMPTS="${2:-10}"
+          SLEEP_SECONDS="${3:-5}"
+
+          ATTEMPT=1
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            echo "Health check attempt ${ATTEMPT}/${MAX_ATTEMPTS}: ${URL}"
+            if curl -fsS "$URL" > /dev/null; then
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep "$SLEEP_SECONDS"
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          echo "Health check failed after ${MAX_ATTEMPTS} attempts"
+          exit 1
+          EOF
+
+          chmod +x dist/scripts/*.sh
+
+          cat > dist/systemd/student-grade-service.service <<'EOF'
+          [Unit]
+          Description=Student Grade Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/student-grade-service/current
+          ExecStart=/opt/student-grade-service/current/student_grade_service
+          Restart=always
+          RestartSec=5
+          Environment=PORT=8080
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
 
           if [ -f README.md ]; then
             cp README.md dist/
@@ -459,7 +553,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            /opt/student-grade-service/scripts/post_deploy_healthcheck.sh http://localhost:8080/health
+            /opt/student-grade-service/scripts/post_deploy_healthcheck.sh http://localhost:8080/health 10 5
 
       - name: Rollback if health check fails
         if: failure()
