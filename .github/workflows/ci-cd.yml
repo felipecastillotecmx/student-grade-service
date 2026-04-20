@@ -229,12 +229,15 @@ jobs:
         run: |
           mkdir -p $BUILD_DIR/coverage
 
-          if [ -f build-artifacts/compile_commands.json ]; then
-            cp build-artifacts/compile_commands.json $BUILD_DIR/compile_commands.json
+          COMPILE_COMMANDS_FILE=$(find build-artifacts -type f -name compile_commands.json | head -n 1 || true)
+          COVERAGE_XML_FILE=$(find build-artifacts -type f -name sonarqube-coverage.xml | head -n 1 || true)
+
+          if [ -n "$COMPILE_COMMANDS_FILE" ]; then
+            cp "$COMPILE_COMMANDS_FILE" "$BUILD_DIR/compile_commands.json"
           fi
 
-          if [ -f build-artifacts/coverage/sonarqube-coverage.xml ]; then
-            cp build-artifacts/coverage/sonarqube-coverage.xml $BUILD_DIR/coverage/sonarqube-coverage.xml
+          if [ -n "$COVERAGE_XML_FILE" ]; then
+            cp "$COVERAGE_XML_FILE" "$BUILD_DIR/coverage/sonarqube-coverage.xml"
           fi
 
           echo "Artifacts restored"
@@ -351,6 +354,13 @@ jobs:
         run: |
           cmake --build $BUILD_DIR --parallel
 
+      - name: Verify required packaging files
+        run: |
+          test -f scripts/deploy.sh
+          test -f scripts/rollback.sh
+          test -f scripts/post_deploy_healthcheck.sh
+          test -f deploy/systemd/student-grade-service.service
+
       - name: Prepare package structure
         run: |
           rm -rf dist
@@ -366,7 +376,13 @@ jobs:
           cp scripts/post_deploy_healthcheck.sh dist/scripts/
           chmod +x dist/scripts/*.sh
 
-          cp deploy/systemd/student-grade-service.service dist/systemd/
+          if [ -f deploy/systemd/student-grade-service.service ]; then
+            cp deploy/systemd/student-grade-service.service dist/systemd/
+          else
+            echo "ERROR: Missing file deploy/systemd/student-grade-service.service"
+            echo "Create the systemd service file in deploy/systemd/student-grade-service.service"
+            exit 1
+          fi
 
           if [ -f README.md ]; then
             cp README.md dist/
