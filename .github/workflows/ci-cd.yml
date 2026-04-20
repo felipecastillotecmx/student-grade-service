@@ -83,7 +83,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ lcov curl jq zip unzip bc
+          sudo apt-get install -y cmake ninja-build g++ lcov gcovr curl jq zip unzip bc
 
       - name: Configure
         run: |
@@ -125,6 +125,19 @@ jobs:
             --ignore-errors mismatch,gcov,unused
 
           lcov --summary $BUILD_DIR/coverage/coverage.filtered.info | tee $BUILD_DIR/coverage/coverage-summary.txt
+
+      - name: Generate SonarQube coverage report
+        run: |
+          gcovr \
+            --root . \
+            --filter src \
+            --filter include \
+            --exclude 'tests/.*' \
+            --exclude '.*/_deps/.*' \
+            --sonarqube $BUILD_DIR/coverage/sonarqube-coverage.xml
+
+          test -f $BUILD_DIR/coverage/sonarqube-coverage.xml
+          echo "SonarQube coverage report generated"
 
       - name: Enforce minimum coverage
         run: |
@@ -219,6 +232,13 @@ jobs:
           echo "compile_commands.json found"
           ls -l $BUILD_DIR/compile_commands.json
 
+      - name: Verify SonarQube coverage report exists
+        if: steps.sonar-secrets.outputs.enabled == 'true'
+        run: |
+          test -f $BUILD_DIR/coverage/sonarqube-coverage.xml
+          echo "sonarqube-coverage.xml found"
+          ls -l $BUILD_DIR/coverage/sonarqube-coverage.xml
+
       - name: SonarQube Scan
         if: steps.sonar-secrets.outputs.enabled == 'true'
         uses: SonarSource/sonarqube-scan-action@v6
@@ -235,6 +255,7 @@ jobs:
             -Dsonar.cfamily.compile-commands=build/compile_commands.json
             -Dsonar.exclusions=build/**,third_party/**
             -Dsonar.test.inclusions=tests/**/*.cpp
+            -Dsonar.coverageReportPaths=build/coverage/sonarqube-coverage.xml
             -Dsonar.verbose=true
 
   dast-zap:
