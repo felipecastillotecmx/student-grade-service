@@ -103,6 +103,43 @@ jobs:
           mkdir -p $BUILD_DIR/test-results
           ctest --test-dir $BUILD_DIR -R unit --output-on-failure --output-junit $BUILD_DIR/test-results/unit-tests.xml
 
+      - name: Generate coverage
+        run: |
+          mkdir -p $BUILD_DIR/coverage
+
+          lcov \
+            --capture \
+            --directory $BUILD_DIR \
+            --output-file $BUILD_DIR/coverage/coverage.info \
+            --ignore-errors mismatch,gcov \
+            --rc geninfo_unexecuted_blocks=1
+
+          lcov \
+            --remove $BUILD_DIR/coverage/coverage.info \
+            '/usr/*' \
+            '*/_deps/*' \
+            '*/tests/*' \
+            '*/test/*' \
+            '*/googletest/*' \
+            '*/googlemock/*' \
+            --output-file $BUILD_DIR/coverage/coverage.filtered.info \
+            --ignore-errors mismatch,gcov
+
+          lcov --summary $BUILD_DIR/coverage/coverage.filtered.info | tee $BUILD_DIR/coverage/coverage-summary.txt
+
+      - name: Enforce minimum coverage
+        run: |
+          COVERAGE=$(lcov --summary $BUILD_DIR/coverage/coverage.filtered.info 2>/dev/null | awk '/lines......:/ {print $2}' | sed 's/%//')
+          echo "Detected coverage: $COVERAGE%"
+          awk -v cov="$COVERAGE" -v threshold="$COVERAGE_THRESHOLD" 'BEGIN {
+            if (cov+0 < threshold+0) {
+              printf("Coverage %.2f%% is below threshold %.2f%%\n", cov, threshold);
+              exit 1;
+            } else {
+              printf("Coverage %.2f%% meets threshold %.2f%%\n", cov, threshold);
+            }
+          }'
+
       - name: Start service for integration tests
         run: |
           nohup ./$BUILD_DIR/$APP_NAME > $BUILD_DIR/app.log 2>&1 &
@@ -120,26 +157,6 @@ jobs:
           if [ -f "$BUILD_DIR/app.pid" ]; then
             kill "$(cat $BUILD_DIR/app.pid)" || true
           fi
-
-      - name: Generate coverage
-        run: |
-          mkdir -p $BUILD_DIR/coverage
-          lcov --capture --directory $BUILD_DIR --output-file $BUILD_DIR/coverage/coverage.info
-          lcov --remove $BUILD_DIR/coverage/coverage.info '/usr/*' '*/_deps/*' '*/tests/*' --output-file $BUILD_DIR/coverage/coverage.filtered.info
-          lcov --summary $BUILD_DIR/coverage/coverage.filtered.info | tee $BUILD_DIR/coverage/coverage-summary.txt
-
-      - name: Enforce minimum coverage
-        run: |
-          COVERAGE=$(lcov --summary $BUILD_DIR/coverage/coverage.filtered.info 2>/dev/null | awk '/lines......:/ {print $2}' | sed 's/%//')
-          echo "Detected coverage: $COVERAGE%"
-          awk -v cov="$COVERAGE" -v threshold="$COVERAGE_THRESHOLD" 'BEGIN {
-            if (cov+0 < threshold+0) {
-              printf("Coverage %.2f%% is below threshold %.2f%%\n", cov, threshold);
-              exit 1;
-            } else {
-              printf("Coverage %.2f%% meets threshold %.2f%%\n", cov, threshold);
-            }
-          }'
 
       - name: Upload build and test artifacts
         uses: actions/upload-artifact@v4
