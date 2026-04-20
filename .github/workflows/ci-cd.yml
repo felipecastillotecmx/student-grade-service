@@ -1,0 +1,322 @@
+name: C++ Enterprise CI/CD
+
+on:
+  push:
+    branches: ["main", "develop", "release/**"]
+  pull_request:
+    branches: ["main", "develop"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+env:
+  BUILD_DIR: build
+  APP_NAME: student_grade_service
+  MIN_COVERAGE: 80
+
+jobs:
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  codeql:
+    name: SAST (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: cpp
+          queries: security-extended,security-and-quality
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ curl zip unzip
+
+      - name: Configure
+        run: cmake --preset default -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build --preset default --parallel
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+
+  build-test:
+    name: Build + Unit + Integration + Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ lcov curl zip unzip
+
+      - name: Configure
+        run: cmake --preset default -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+
+      - name: Build
+        run: cmake --build --preset default --parallel
+
+      - name: Run unit tests
+        run: |
+          mkdir -p build/test-results
+          ctest --test-dir build -R '^unit\.' --output-on-failure --output-junit build/test-results/unit-tests.xml
+
+      - name: Start service for integration tests
+        run: |
+          nohup ./build/student_grade_service > build/app.log 2>&1 &
+          echo $! > build/app.pid
+          sleep 5
+          curl -f http://localhost:8080/health
+
+      - name: Run integration tests
+        run: |
+          ctest --test-dir build -R '^integration\.' --output-on-failure --output-junit build/test-results/integration-tests.xml
+
+      - name: Generate coverage
+        run: |
+          mkdir -p build/coverage
+          lcov --capture --directory build --output-file build/coverage/coverage.info
+          lcov --remove build/coverage/coverage.info '/usr/*' '*/_deps/*' '*/tests/*' --output-file build/coverage/coverage.filtered.info
+          lcov --list build/coverage/coverage.filtered.info
+
+      - name: Enforce minimum coverage
+        run: ./scripts/check_coverage.sh build/coverage/coverage.filtered.info
+        env:
+          MIN_COVERAGE: ${{ env.MIN_COVERAGE }}
+
+      - name: Stop service
+        if: always()
+        run: |
+          if [[ -f build/app.pid ]]; then
+            kill $(cat build/app.pid) || true
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-build-and-test-artifacts
+          path: |
+            build/${{ env.APP_NAME }}
+            build/test-results/
+            build/coverage/
+            build/app.log
+            build/compile_commands.json
+
+  sonarqube:
+    name: SonarQube Scan
+    runs-on: ubuntu-latest
+    needs: [build-test]
+    if: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ curl unzip zip
+
+      - name: Install SonarQube Build Wrapper
+        uses: SonarSource/sonarqube-scan-action/install-build-wrapper@v4
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Configure clean build
+        run: cmake --preset default -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build with Build Wrapper
+        run: |
+          build-wrapper-linux-x86-64 --out-dir bw-output cmake --build --preset default --parallel
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=student-grade-service
+            -Dsonar.projectName=student-grade-service
+            -Dsonar.sources=src,include
+            -Dsonar.tests=tests
+            -Dsonar.cfamily.compile-commands=bw-output/compile_commands.json
+            -Dsonar.exclusions=build/**
+            -Dsonar.test.inclusions=tests/**/*.cpp
+
+  dast-zap:
+    name: DAST (OWASP ZAP)
+    runs-on: ubuntu-latest
+    needs: [build-test]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build --preset default --parallel
+
+      - name: Start service
+        run: |
+          nohup ./build/student_grade_service > build/app.log 2>&1 &
+          echo $! > build/app.pid
+          sleep 8
+          curl -f http://localhost:8080/health
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: 'http://localhost:8080'
+          fail_action: false
+          cmd_options: '-a'
+
+      - name: Stop service
+        if: always()
+        run: |
+          if [[ -f build/app.pid ]]; then
+            kill $(cat build/app.pid) || true
+          fi
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            report_html.html
+            report_md.md
+            report_json.json
+
+  package:
+    name: Package Release
+    runs-on: ubuntu-latest
+    needs: [secret-scan, codeql, build-test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ tar gzip
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build --preset default --parallel
+
+      - name: Package release
+        run: |
+          mkdir -p dist
+          cp build/student_grade_service dist/
+                    tar -czf student-grade-service.tar.gz -C dist .
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-package
+          path: student-grade-service.tar.gz
+
+  deploy:
+    name: Deploy to Linux Server
+    runs-on: ubuntu-latest
+    needs: [package]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: release-package
+
+      - name: Copy package to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "student-grade-service.tar.gz"
+          target: "/tmp"
+
+      - name: Deploy package
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            sudo mkdir -p /opt/student-grade-service /opt/student-grade-service-backups /opt/student-grade-service/scripts
+            sudo chown -R ubuntu:ubuntu /opt/student-grade-service /opt/student-grade-service-backups
+
+            if [[ ! -f /etc/systemd/system/student-grade-service.service ]]; then
+              sudo cp deploy/student-grade-service.service /etc/systemd/system/student-grade-service.service
+              sudo systemctl daemon-reload
+              sudo systemctl enable student-grade-service
+            fi
+
+            sudo cp scripts/deploy.sh /opt/student-grade-service/scripts/deploy.sh
+            sudo cp scripts/post_deploy_healthcheck.sh /opt/student-grade-service/scripts/post_deploy_healthcheck.sh
+            sudo cp scripts/rollback.sh /opt/student-grade-service/scripts/rollback.sh
+            sudo chmod +x /opt/student-grade-service/scripts/*.sh
+            sudo /opt/student-grade-service/scripts/deploy.sh /tmp/student-grade-service.tar.gz
+
+      - name: Health check post-deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            sudo /opt/student-grade-service/scripts/post_deploy_healthcheck.sh http://localhost:8080/health
+
+      - name: Rollback on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            /opt/student-grade-service/scripts/rollback.sh
+            sudo /opt/student-grade-service/scripts/post_deploy_healthcheck.sh http://localhost:8080/health
