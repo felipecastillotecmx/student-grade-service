@@ -138,6 +138,7 @@ jobs:
 
           test -f $BUILD_DIR/coverage/sonarqube-coverage.xml
           echo "SonarQube coverage report generated"
+          ls -l $BUILD_DIR/coverage/sonarqube-coverage.xml
 
       - name: Enforce minimum coverage
         run: |
@@ -215,15 +216,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ curl unzip zip
 
-      - name: Configure
+      - name: Download build artifacts
         if: steps.sonar-secrets.outputs.enabled == 'true'
-        run: |
-          cmake -S . -B $BUILD_DIR -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        uses: actions/download-artifact@v4
+        with:
+          name: cpp-build-and-test-artifacts
+          path: build-artifacts
 
-      - name: Build
+      - name: Restore coverage and compile commands
         if: steps.sonar-secrets.outputs.enabled == 'true'
         run: |
-          cmake --build $BUILD_DIR --parallel
+          mkdir -p $BUILD_DIR/coverage
+
+          if [ -f build-artifacts/compile_commands.json ]; then
+            cp build-artifacts/compile_commands.json $BUILD_DIR/compile_commands.json
+          fi
+
+          if [ -f build-artifacts/coverage/sonarqube-coverage.xml ]; then
+            cp build-artifacts/coverage/sonarqube-coverage.xml $BUILD_DIR/coverage/sonarqube-coverage.xml
+          fi
+
+          echo "Artifacts restored"
+          ls -R build-artifacts || true
+          ls -R $BUILD_DIR || true
 
       - name: Verify compile_commands.json exists
         if: steps.sonar-secrets.outputs.enabled == 'true'
