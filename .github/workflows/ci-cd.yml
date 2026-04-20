@@ -175,6 +175,7 @@ jobs:
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_ROOT_CERT: ${{ secrets.SONAR_ROOT_CERT }}
 
     steps:
       - name: Validate SonarQube secrets
@@ -200,22 +201,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ curl unzip zip
 
-      - name: Install Sonar Build Wrapper
-        if: steps.sonar-secrets.outputs.enabled == 'true'
-        uses: SonarSource/sonarqube-scan-action/install-build-wrapper@v6
-        env:
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
-
       - name: Configure
         if: steps.sonar-secrets.outputs.enabled == 'true'
         run: |
           cmake -S . -B $BUILD_DIR -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Build with Build Wrapper
+      - name: Build
         if: steps.sonar-secrets.outputs.enabled == 'true'
         run: |
-          build-wrapper-linux-x86-64 --out-dir bw-output cmake --build $BUILD_DIR --parallel
+          cmake --build $BUILD_DIR --parallel
 
       - name: SonarQube Scan
         if: steps.sonar-secrets.outputs.enabled == 'true'
@@ -223,15 +217,17 @@ jobs:
         env:
           SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_ROOT_CERT: ${{ env.SONAR_ROOT_CERT }}
         with:
           args: >
             -Dsonar.projectKey=student-grade-service
             -Dsonar.projectName=student-grade-service
             -Dsonar.sources=src,include
             -Dsonar.tests=tests
-            -Dsonar.cfamily.compile-commands=bw-output/compile_commands.json
+            -Dsonar.cfamily.compile-commands=build/compile_commands.json
             -Dsonar.exclusions=build/**,third_party/**
             -Dsonar.test.inclusions=tests/**/*.cpp
+            -Dsonar.qualitygate.wait=true
 
   dast-zap:
     name: DAST (OWASP ZAP)
