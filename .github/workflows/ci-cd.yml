@@ -111,7 +111,7 @@ jobs:
             --capture \
             --directory $BUILD_DIR \
             --output-file $BUILD_DIR/coverage/coverage.info \
-            --ignore-errors mismatch,gcov \
+            --ignore-errors mismatch,gcov,unused \
             --rc geninfo_unexecuted_blocks=1
 
           lcov \
@@ -119,11 +119,10 @@ jobs:
             '/usr/*' \
             '*/_deps/*' \
             '*/tests/*' \
-            '*/test/*' \
             '*/googletest/*' \
             '*/googlemock/*' \
             --output-file $BUILD_DIR/coverage/coverage.filtered.info \
-            --ignore-errors mismatch,gcov
+            --ignore-errors mismatch,gcov,unused
 
           lcov --summary $BUILD_DIR/coverage/coverage.filtered.info | tee $BUILD_DIR/coverage/coverage-summary.txt
 
