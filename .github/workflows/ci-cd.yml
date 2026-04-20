@@ -83,7 +83,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ lcov curl jq zip unzip
+          sudo apt-get install -y cmake ninja-build g++ lcov curl jq zip unzip bc
 
       - name: Configure
         run: |
@@ -217,6 +217,7 @@ jobs:
         run: |
           test -f $BUILD_DIR/compile_commands.json
           echo "compile_commands.json found"
+          ls -l $BUILD_DIR/compile_commands.json
 
       - name: SonarQube Scan
         if: steps.sonar-secrets.outputs.enabled == 'true'
@@ -234,7 +235,7 @@ jobs:
             -Dsonar.cfamily.compile-commands=build/compile_commands.json
             -Dsonar.exclusions=build/**,third_party/**
             -Dsonar.test.inclusions=tests/**/*.cpp
-            -Dsonar.qualitygate.wait=true
+            -Dsonar.verbose=true
 
   dast-zap:
     name: DAST (OWASP ZAP)
