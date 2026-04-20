@@ -405,7 +405,7 @@ jobs:
             chmod +x "$SCRIPTS_DIR/"*.sh || true
           fi
 
-          systemctl restart student-grade-service
+          sudo systemctl restart student-grade-service
           EOF
 
           cat > dist/scripts/rollback.sh <<'EOF'
@@ -432,7 +432,7 @@ jobs:
           cp -R "${TARGET_BACKUP}/." "$CURRENT_DIR/"
           chmod +x "$CURRENT_DIR/student_grade_service"
 
-          systemctl restart student-grade-service
+          sudo systemctl restart student-grade-service
           echo "Rollback completed successfully"
           EOF
 

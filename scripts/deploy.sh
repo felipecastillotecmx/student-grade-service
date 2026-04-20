@@ -36,5 +36,5 @@ rm -rf "$RELEASE_DIR"
 install -d -m 755 -o "$APP_USER" -g "$APP_GROUP" "$RELEASE_DIR"
 install -m 755 -o "$APP_USER" -g "$APP_GROUP" "$TMP_EXTRACT_DIR/$APP_NAME" "$RELEASE_DIR/$APP_NAME"
 
-systemctl daemon-reload
-systemctl restart "$SERVICE_NAME"
+sudo systemctl daemon-reload
+sudo systemctl restart "$SERVICE_NAME"

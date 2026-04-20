@@ -21,5 +21,5 @@ mkdir -p "$CURRENT_DIR"
 cp -R "${TARGET_BACKUP}/." "$CURRENT_DIR/"
 chmod +x "$CURRENT_DIR/student_grade_service"
 
-systemctl restart student-grade-service
+sudo systemctl restart student-grade-service
 echo "Rollback completed successfully"
