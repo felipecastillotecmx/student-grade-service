@@ -417,8 +417,8 @@ jobs:
           BACKUP_LINK="/opt/student-grade-service-backups/latest"
 
           if [ ! -L "$BACKUP_LINK" ] && [ ! -d "$BACKUP_LINK" ]; then
-            echo "No backup found for rollback"
-            exit 1
+            echo "No backup found for rollback. This is expected on first deployment."
+            exit 0
           fi
 
           TARGET_BACKUP="$(readlink -f "$BACKUP_LINK")"
@@ -433,6 +433,7 @@ jobs:
           chmod +x "$CURRENT_DIR/student_grade_service"
 
           systemctl restart student-grade-service
+          echo "Rollback completed successfully"
           EOF
 
           cat > dist/scripts/post_deploy_healthcheck.sh <<'EOF'
@@ -564,7 +565,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            /opt/student-grade-service/scripts/rollback.sh
+            /opt/student-grade-service/scripts/rollback.sh || true
 
       - name: Verify service status after rollback
         if: failure()

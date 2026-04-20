@@ -1,26 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_DIR="/opt/student-grade-service"
-BACKUP_ROOT="/opt/student-grade-service-backups"
-SERVICE_NAME="student-grade-service"
-RELEASE_DIR="$DEPLOY_DIR/current"
-APP_NAME="student_grade_service"
-APP_USER="ubuntu"
-APP_GROUP="ubuntu"
+APP_ROOT="/opt/student-grade-service"
+CURRENT_DIR="${APP_ROOT}/current"
+BACKUP_LINK="/opt/student-grade-service-backups/latest"
 
-LAST_BACKUP=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -r | head -n 1 || true)
+if [ ! -L "$BACKUP_LINK" ] && [ ! -d "$BACKUP_LINK" ]; then
+  echo "No backup found for rollback. This is expected on first deployment."
+  exit 0
+fi
 
-if [[ -z "$LAST_BACKUP" ]]; then
-  echo "No backup found to rollback"
+TARGET_BACKUP="$(readlink -f "$BACKUP_LINK")"
+if [ -z "$TARGET_BACKUP" ] || [ ! -d "$TARGET_BACKUP" ]; then
+  echo "Resolved backup path is invalid"
   exit 1
 fi
 
-echo "Rolling back using backup: $LAST_BACKUP"
-rm -rf "$RELEASE_DIR"
-install -d -m 755 -o "$APP_USER" -g "$APP_GROUP" "$RELEASE_DIR"
-cp -a "$LAST_BACKUP/." "$RELEASE_DIR/"
-chown -R "$APP_USER:$APP_GROUP" "$RELEASE_DIR"
-chmod +x "$RELEASE_DIR/$APP_NAME"
-systemctl daemon-reload
-systemctl restart "$SERVICE_NAME"
+rm -rf "$CURRENT_DIR"
+mkdir -p "$CURRENT_DIR"
+cp -R "${TARGET_BACKUP}/." "$CURRENT_DIR/"
+chmod +x "$CURRENT_DIR/student_grade_service"
+
+systemctl restart student-grade-service
+echo "Rollback completed successfully"
