@@ -1,4 +1,4 @@
-# Student Grade Service - C++ Enterprise CI/CD 
+# Student Grade Service
 
 - CMake
 - GoogleTest
