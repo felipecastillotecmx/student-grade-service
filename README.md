@@ -6,10 +6,10 @@
 - pruebas de integración
 - cobertura mínima
 - SonarQube
-- escaneo de secretos con Gitleaks
+- escaneo de contraseñas con Gitleaks
 - SAST con CodeQL
 - DAST con OWASP ZAP
-- empaquetado
+- package
 - deploy por SSH
 - health check post-deploy
 - rollback automático
