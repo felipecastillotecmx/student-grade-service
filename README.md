@@ -140,3 +140,4 @@ El script `deploy.sh` guarda la versión anterior en:
 ```
 
 Si el health check falla, el workflow ejecuta `rollback.sh`, restaura el último respaldo y vuelve a verificar `/health`.
+
